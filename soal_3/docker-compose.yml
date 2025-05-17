@@ -1,0 +1,25 @@
+# docker-compose.yml
+version: '3.8'
+services:
+  antink-server:
+    build: .
+    container_name: antink-server
+    privileged: true
+    devices:
+      - /dev/fuse
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - apparmor:unconfined
+    volumes:
+      - ./it24_host:/it24_host
+      - ./antink_mount:/antink_mount
+      - ./antink_logs:/var/log/
+    restart: always
+
+  antink-logger:
+    image: ubuntu:20.04
+    container_name: antink-logger
+    volumes:
+      - ./antink_logs:/var/log/
+    command: tail -f /var/log/it24.log
