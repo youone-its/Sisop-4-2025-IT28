@@ -234,11 +234,11 @@ Bebaskan memori yang sudah dialokasikan sebelumnya agar tidak terjadi memory lea
 ### Oleh: Nafis Faqih Allmuzaky Maolidi
 
 ### baymax.c
-```c
-Header dan Makro
-```
-#define FUSE_USE_VERSION 31
 
+Header dan Makro
+```c
+#define FUSE_USE_VERSION 31
+```
 Menentukan versi FUSE yang digunakan (FUSE 3.1).
 ```c
 #include <fuse3/fuse.h>
