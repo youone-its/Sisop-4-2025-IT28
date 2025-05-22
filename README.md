@@ -472,3 +472,220 @@ return fuse_main(3, fuse_argv, &antink_oper, NULL);
 
 ## Soal_4
 ### Oleh: Yuan Banny Albyan
+
+- compile nya: gcc -Wall -O2 -D_POSIX_C_SOURCE=200809L maimai_fs.c -o maimai_fs \
+    -lfuse3 -lssl -lcrypto -lz
+- run nya: ./maimai_fs
+- otomatis membuat
+.
+├── chiho/           # Direktori output asli (setiap area punya subfolder)
+│   ├── starter/
+│   ├── metro/
+│   ├── dragon/
+│   ├── blackrose/
+│   ├── heaven/
+│   └── youth/
+└── fuse_dir/        # Mountpoint FUSE untuk interaksi user
+    ├── starter/
+    ├── metro/
+    ├── dragon/
+    ├── blackrose/
+    ├── heaven/
+    ├── youth/
+    └── 7sref/
+
+```c
+#define _POSIX_C_SOURCE 200809L
+#define FUSE_USE_VERSION 35
+```
+Menjamin fitur POSIX (misal pread, pwrite).
+Memilih versi API FUSE (v3.5).
+
+```c
+#include <fuse3/fuse.h>
+#include <openssl/evp.h>
+#include <openssl/rand.h>
+#include <zlib.h>
+```
+fuse.h: callback filesystem.
+openssl: implementasi AES-256-CBC.
+zlib: gzip compression.
+
+- alur program:
+1. Buat direktori awal (make_dir) untuk output (chiho/) dan mountpoint (fuse_dir/).
+2. Buat subfolder sesuai area (starter,metro,…youth) dan 7sref.
+3. Scan file existing di fuse_dir dan backup ke chiho/[area]/ tanpa transformasi (7sref).
+4. Mount FUSE pada fuse_dir/7sref dengan opsi auto_unmount dan idle_timeout=3.
+
+
+```c
+static void make_dir(const char *path) {
+    if (mkdir(path, 0755) == 0)
+        printf("✔ Created: %s\n", path);
+    else if (errno != EEXIST)
+        fprintf(stderr, "✖ Error mkdir %s: %s\n", path, strerror(errno));
+}
+```
+Buat folder root & subfolder tiap area || Cek errno, ignore EEXIST
+
+```c
+static void scan_existing() {
+    for (int i = 0; i < CAT_COUNT; i++) {
+        const char *cat = CATS[i];
+        char d[PATH_MAX];
+        snprintf(d, sizeof(d), "%s/%s", BASE_FUSE, cat);
+        DIR *dp = opendir(d);
+        struct dirent *e;
+        while (dp && (e = readdir(dp))) {
+            if (e->d_type == DT_REG)
+                process_file(cat, e->d_name);
+        }
+        if (dp) closedir(dp);
+    }
+}
+```
+Backup file lama tanpa transform || Iterasi tiap subdir & panggil process_file()
+
+```c
+static void process_file(const char *cat, const char *fname) {
+    char src[PATH_MAX], bak[PATH_MAX], dst[PATH_MAX];
+    snprintf(src, sizeof(src), "%s/%s/%s", BASE_FUSE, cat, fname);
+    snprintf(bak, sizeof(bak), "%s/%s/%s_%s",
+             BASE_FUSE, REF_DIR, cat, fname);
+    transform_copy(src, bak, "");
+    snprintf(dst, sizeof(dst), "%s/%s/%s%s",
+             BASE_CHIHO, cat, fname, get_ext(cat));
+    transform_copy(src, dst, cat);
+}
+
+```
+Soal: implement backup & transform || 2x transform_copy(): backup (.7sref) + area
+
+```c
+static int transform_copy(const char *src, const char *dst, const char *cat) {
+    int infd = open(src, O_RDONLY);
+    if (infd < 0) return -errno;
+    int outfd = open(dst, O_WRONLY|O_CREAT|O_TRUNC, 0644);
+    if (outfd < 0) { close(infd); return -errno; }
+
+    char buf[4096];
+    ssize_t r;
+
+    if (needs_aes(cat)) {
+        unsigned char key[32], iv[16];
+        RAND_bytes(key, sizeof(key));
+        RAND_bytes(iv, sizeof(iv));
+        EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+        EVP_EncryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, key, iv);
+        write(outfd, iv, sizeof(iv));
+
+        char outb[4096 + EVP_MAX_BLOCK_LENGTH];
+        int outl;
+        while ((r = read(infd, buf, sizeof(buf))) > 0) {
+            EVP_EncryptUpdate(ctx, (unsigned char*)outb, &outl, (unsigned char*)buf, r);
+            if (outl) write(outfd, outb, outl);
+        }
+        EVP_EncryptFinal_ex(ctx, (unsigned char*)outb, &outl);
+        if (outl) write(outfd, outb, outl);
+        EVP_CIPHER_CTX_free(ctx);
+
+    } else if (needs_gzip(cat)) {
+        FILE *fin = fdopen(infd, "rb");
+        gzFile gz = gzdopen(open(dst, O_WRONLY|O_CREAT|O_TRUNC, 0644), "wb");
+        while ((r = fread(buf, 1, sizeof(buf), fin)) > 0) gzwrite(gz, buf, r);
+        fclose(fin);
+        gzclose(gz);
+
+    } else {
+        while ((r = read(infd, buf, sizeof(buf))) > 0) {
+            if (needs_shift(cat)) shift_buffer(buf, r);
+            else if (needs_rot13(cat)) rot13_buffer(buf, r);
+            write(outfd, buf, r);
+        }
+    }
+
+    close(infd);
+    close(outfd);
+    return 0;
+}
+```
+Soal: manipulasi file sesuai jenis area || Kondisional: shift, ROT13, AES, gzip, atau biasa
+
+```c
+static void shift_buffer(char *buf, size_t len) {
+    for (size_t i = 0; i < len; i++) buf[i] = (unsigned char)(buf[i] + (i % 256));
+}
+```
+Metropolis (metro): shift byte sesuai indeks modul 256 || Tambah (i % 256)
+
+```c
+static void rot13_buffer(char *buf, size_t len) {
+    for (size_t i = 0; i < len; i++) {
+        unsigned char c = buf[i];
+        if (c >= 'a' && c <= 'z') buf[i] = 'a' + (c - 'a' + 13) % 26;
+        else if (c >= 'A' && c <= 'Z') buf[i] = 'A' + (c - 'A' + 13) % 26;
+    }
+}
+```
+Dragon: enkripsi ROT13
+
+```c
+if (needs_aes(cat)) {
+        unsigned char key[32], iv[16];
+        RAND_bytes(key, sizeof(key));
+        RAND_bytes(iv, sizeof(iv));
+        EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+        EVP_EncryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, key, iv);
+        write(outfd, iv, sizeof(iv));
+
+        char outb[4096 + EVP_MAX_BLOCK_LENGTH];
+        int outl;
+        while ((r = read(infd, buf, sizeof(buf))) > 0) {
+            EVP_EncryptUpdate(ctx, (unsigned char*)outb, &outl, (unsigned char*)buf, r);
+            if (outl) write(outfd, outb, outl);
+        }
+        EVP_EncryptFinal_ex(ctx, (unsigned char*)outb, &outl);
+        if (outl) write(outfd, outb, outl);
+        EVP_CIPHER_CTX_free(ctx);
+
+    }
+```
+Heaven: enkripsi AES-256-CBC
+
+```c
+ else if (needs_gzip(cat)) {
+        FILE *fin = fdopen(infd, "rb");
+        gzFile gz = gzdopen(open(dst, O_WRONLY|O_CREAT|O_TRUNC, 0644), "wb");
+        while ((r = fread(buf, 1, sizeof(buf), fin)) > 0) gzwrite(gz, buf, r);
+        fclose(fin);
+        gzclose(gz);
+
+    } 
+```
+Skystreet: kompresi gzip || zlib: gzwrite()
+
+```c
+static int fs_release(const char *path, struct fuse_file_info *fi) {
+    close(fi->fh);
+    // setelah file ditutup, proses backup+transform
+    size_t b = strlen(BASE_FUSE);
+    if (!strncmp(path+1, BASE_FUSE, b)) {
+        char tmp[PATH_MAX];
+        strcpy(tmp, path+1+b+1);
+        char *cat = strtok(tmp, "/");
+        char *f   = strtok(NULL, "/");
+        if (cat && f) process_file(cat, f);
+    }
+    return 0;
+}
+```
+Trigger backup & transform setelah file ditutup
+Cek path, parse area & nama file
+
+
+
+
+
+
+
+
