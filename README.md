@@ -233,6 +233,145 @@ Bebaskan memori yang sudah dialokasikan sebelumnya agar tidak terjadi memory lea
 ## Soal_2
 ### Oleh: Nafis Faqih Allmuzaky Maolidi
 
+### baymax.c
+```c
+Header dan Makro
+```
+#define FUSE_USE_VERSION 31
+
+Menentukan versi FUSE yang digunakan (FUSE 3.1).
+```c
+#include <fuse3/fuse.h>
+#include <stdio.h>
+#include <string.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <dirent.h>
+#include <stdlib.h>
+#include <time.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+```
+Mengimpor pustaka standar dan pustaka FUSE.
+```c
+#define MAX_PART 10000
+#define PART_SIZE 1024
+#define RELIC_DIR "/home/nafisfaqih/modul_4/soal_2/relics"
+#define LOG_FILE "/home/nafisfaqih/modul_4/soal_2/activity.log"
+```
+MAX_PART: Batas maksimum jumlah part file.
+
+PART_SIZE: Ukuran maksimal tiap file part (1 KB).
+
+RELIC_DIR: Direktori asal file-file part.
+
+LOG_FILE: File untuk mencatat aktivitas.
+
+Fungsi write_log
+```c
+void write_log(const char *action, const char *info);
+```
+Mencatat aktivitas seperti READ, WRITE, DELETE, CREATE, dan COPY ke file activity.log dengan timestamp.
+
+Fungsi-fungsi Callback FUSE
+
+fs_getattr
+```c
+static int fs_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi);
+```
+Mengisi informasi metadata file (stat) saat user melihat file.
+
+Menggabungkan ukuran semua part filename.000, filename.001, dst untuk dihitung sebagai ukuran total file.
+
+fs_readdir
+```c
+static int fs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags);
+```
+Digunakan saat perintah ls dipanggil di folder mount.
+
+Menampilkan file jika part .000 ada (asumsi bahwa .000 berarti awal file).
+
+fs_open
+```c
+static int fs_open(const char *path, struct fuse_file_info *fi);
+```
+Cek apakah file .000 ada.
+
+Jika iya, tulis log READ.
+
+fs_read
+```c
+static int fs_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
+```
+Membaca semua part filename.000, filename.001, dst sampai ukuran habis.
+
+Jika offset == 0 dan total_read > 0, dicatat sebagai COPY karena kemungkinan besar terjadi operasi cp.
+
+fs_create
+```c
+static int fs_create(const char *path, mode_t mode, struct fuse_file_info *fi);
+```
+Membuat file kosong filename.000 saat pengguna membuat file baru.
+
+Menulis log CREATE.
+
+fs_write
+```c
+static int fs_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
+```
+Membagi isi buffer ke beberapa file .000, .001, ... sesuai ukuran PART_SIZE.
+
+Menulis log WRITE disertai nama-nama part.
+
+fs_unlink
+```c
+static int fs_unlink(const char *path);
+```
+Menghapus semua file part filename.000 hingga akhir.
+
+Menulis log DELETE dengan info rentang part yang dihapus.
+
+Struktur Operasi FUSE
+```c
+static const struct fuse_operations fs_oper = { ... };
+```
+
+Menentukan fungsi callback yang akan digunakan oleh FUSE (open, read, write, dll).
+
+Fungsi Main
+```c
+int main(int argc, char *argv[]) {
+    return fuse_main(argc, argv, &fs_oper, NULL);
+}
+```
+
+Menjalankan FUSE dengan operasi yang sudah didefinisikan di fs_oper.
+
+Contoh Struktur Folder Saat Dijalankan
+```
+.
+├── activity.log
+├── baymax
+├── baymax.c
+├── mount_dir
+│   └── Baymax.jpeg
+├── relics
+│   ├── Baymax.jpeg.000
+│   ├── Baymax.jpeg.001
+│   └── ...
+└── test.txt
+```
+
+Contoh Aktivitas Log
+```
+[2025-05-22 07:08:30] READ: Baymax.jpeg
+[2025-05-22 09:07:57] COPY: Baymax.jpeg
+[2025-05-22 09:03:58] CREATE: test.txt.000
+[2025-05-22 09:03:58] WRITE: test.txt -> test.txt.000
+[2025-05-22 09:04:15] DELETE: test.txt.000 - test.txt.000
+```
+
 ## Soal_3
 ### Oleh: Ica Zika Hamizah
 
